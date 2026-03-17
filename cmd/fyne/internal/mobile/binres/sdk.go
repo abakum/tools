@@ -14,8 +14,8 @@ import (
 const (
 	// MinSDK = 15
 	// platformBuildVersionName="4.0.4-1406430"
-	MinSDK           = 21
-	BuildVersionName = "5.0.1-1624448"
+	MinSDK           = 23
+	BuildVersionName = "6.0.1-2166767"
 )
 
 // Requires environment variable ANDROID_HOME to be set.

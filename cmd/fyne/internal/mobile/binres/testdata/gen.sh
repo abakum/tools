@@ -5,8 +5,8 @@
 AAPT=${ANDROID_HOME}/build-tools/35.0.0/aapt
 
 # minimum version of android api for resource identifiers supported
-# sdkmanager "platforms;android-21"
-APIJAR=${ANDROID_HOME}/platforms/android-21/android.jar
+# sdkmanager "platforms;android-23"
+APIJAR=${ANDROID_HOME}/platforms/android-23/android.jar
 
 for f in *.xml; do
 	RES=""

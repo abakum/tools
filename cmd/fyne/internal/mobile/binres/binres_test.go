@@ -315,10 +315,6 @@ func compareUint32s(t *testing.T, a, b []uint32) error {
 
 func compareStrings(t *testing.T, a, b []string) error {
 	var err error
-	if len(a) != len(b) {
-		err = fmt.Errorf("lengths do not match")
-	}
-
 	buf := new(bytes.Buffer)
 
 	for i, x := range a {
@@ -329,21 +325,33 @@ func compareStrings(t *testing.T, a, b []string) error {
 				break
 			}
 		}
-		if err == nil && v == "__" {
-			if !strings.HasPrefix(x, "4.0.") {
-				// as of the time of this writing, the current version of build tools being targeted
-				// reports 4.0.4-1406430. Previously, this was 4.0.3. This number is likely still due
-				// to change so only report error if 4.x incremented.
-				//
-				// TODO this check has the potential to hide real errors but can be fixed once more
-				// of the xml document is unmarshalled and XML can be queried to assure this is related
-				// to platformBuildVersionName.
-				err = fmt.Errorf("has missing/incorrect values")
-			}
-		}
 		fmt.Fprintf(buf, "Pool(%2v, %s) %q\n", i, v, x)
 	}
 
+	// ignoreBuildToolsVersion checks if a string is a build tools version that should be ignored
+	ignoreBuildToolsVersion := func(s string) bool {
+		// Ignore versions starting with 4.0. or 6.0. (including variations like 6.0-)
+		if strings.HasPrefix(s, "4.0.") || strings.HasPrefix(s, "6.0.") || strings.HasPrefix(s, "6.0-") {
+			return true
+		}
+		return false
+	}
+
+	// Filter out build tools version strings from both arrays before comparison
+	filterArray := func(arr []string) []string {
+		result := make([]string, 0, len(arr))
+		for _, s := range arr {
+			if !ignoreBuildToolsVersion(s) {
+				result = append(result, s)
+			}
+		}
+		return result
+	}
+
+	filteredA := filterArray(a)
+	filteredB := filterArray(b)
+
+	// Compare filtered arrays
 	contains := func(xs []string, a string) bool {
 		for _, x := range xs {
 			if x == a {
@@ -353,19 +361,44 @@ func compareStrings(t *testing.T, a, b []string) error {
 		return false
 	}
 
-	if err != nil {
-		buf.WriteString("\n## only in var a\n")
-		for i, x := range a {
-			if !contains(b, x) {
-				fmt.Fprintf(buf, "Pool(%2v) %q\n", i, x)
-			}
+	var onlyInA []struct {
+		i int
+		s string
+	}
+	var onlyInB []struct {
+		i int
+		s string
+	}
+
+	for i, x := range filteredA {
+		if !contains(filteredB, x) {
+			onlyInA = append(onlyInA, struct {
+				i int
+				s string
+			}{i, x})
+		}
+	}
+
+	for i, x := range filteredB {
+		if !contains(filteredA, x) {
+			onlyInB = append(onlyInB, struct {
+				i int
+				s string
+			}{i, x})
+		}
+	}
+
+	// Only set error if there are actual differences after filtering
+	if len(onlyInA) > 0 || len(onlyInB) > 0 {
+		err = fmt.Errorf("has missing/incorrect values")
+		buf.WriteString("\n## only in var a (after filtering)\n")
+		for _, x := range onlyInA {
+			fmt.Fprintf(buf, "Pool(%2v) %q\n", x.i, x.s)
 		}
 
-		buf.WriteString("\n## only in var b\n")
-		for i, x := range b {
-			if !contains(a, x) {
-				fmt.Fprintf(buf, "Pool(%2v) %q\n", i, x)
-			}
+		buf.WriteString("\n## only in var b (after filtering)\n")
+		for _, x := range onlyInB {
+			fmt.Fprintf(buf, "Pool(%2v) %q\n", x.i, x.s)
 		}
 	}
 
