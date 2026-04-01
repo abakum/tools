@@ -6,7 +6,9 @@ package mobile
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/pem"
 	"encoding/xml"
@@ -15,12 +17,16 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
+	"time"
+
+	"software.sslmate.com/src/go-pkcs12"
 
 	"fyne.io/tools/cmd/fyne/internal/mobile/binres"
 	"fyne.io/tools/cmd/fyne/internal/templates"
@@ -478,8 +484,11 @@ Mc6xR47qkdzu0dQ1aPm4XD7AWDtIvPo/GG2DKOucLBbQc2cOWtKS
 `
 
 // signAPK signs an APK file using apksigner with a debug keystore.
-// It automatically locates Android SDK build-tools and Java keytool,
-// and generates a debug keystore if it is missing.
+// It first checks for an existing ~/.android/debug.keystore
+// (which may be provisioned from GitHub Secrets or other CI/CD secrets).
+// If no keystore is found, it generates one from the hardcoded debugCert key
+// to ensure consistent signing across machines, and saves it as debug.keystore
+// for reuse in subsequent builds.
 func signAPK(apkPath string) error {
 	if buildV {
 		fmt.Fprintf(os.Stderr, "Signing APK with apksigner...\n")
@@ -513,7 +522,7 @@ func signAPK(apkPath string) error {
 		}
 	}
 
-	// 2. Define path to debug.keystore
+	// 2. Check for existing debug keystore (e.g. provisioned from GitHub Secrets)
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -521,43 +530,65 @@ func signAPK(apkPath string) error {
 	keystoreDir := filepath.Join(homeDir, ".android")
 	debugKeystore := filepath.Join(keystoreDir, "debug.keystore")
 
-	// 3. Ensure keystore exists or create a new one
-	if _, err := os.Stat(debugKeystore); os.IsNotExist(err) {
+	if _, err := os.Stat(debugKeystore); err != nil {
+		// No keystore — generate one from hardcoded debugCert
 		if buildV {
-			fmt.Fprintf(os.Stderr, "Debug keystore not found, creating one...\n")
+			fmt.Fprintf(os.Stderr, "No debug keystore found, generating from hardcoded debug key...\n")
 		}
 
-		// CRITICAL: Create .android directory if it doesn't exist (mandatory for CI environments)
-		if err := os.MkdirAll(keystoreDir, 0755); err != nil {
+		if err := os.MkdirAll(keystoreDir, 0o755); err != nil {
 			return fmt.Errorf("failed to create keystore directory: %v", err)
 		}
 
-		// Locate keytool (bundled with Java JDK)
-		if _, err := exec.LookPath("keytool"); err != nil {
-			if javaHome := os.Getenv("JAVA_HOME"); javaHome != "" {
-				binPath := filepath.Join(javaHome, "bin")
-				os.Setenv("PATH", binPath+string(os.PathListSeparator)+os.Getenv("PATH"))
-			}
+		// Parse the hardcoded debug private key
+		block, _ := pem.Decode([]byte(debugCert))
+		if block == nil {
+			return errors.New("failed to decode debug certificate PEM")
+		}
+		privKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+		if err != nil {
+			return fmt.Errorf("failed to parse debug private key: %v", err)
 		}
 
-		keytoolCmd := exec.Command("keytool",
-			"-genkey", "-v",
-			"-keystore", debugKeystore,
-			"-alias", "androiddebugkey",
-			"-storepass", "android",
-			"-keypass", "android",
-			"-keyalg", "RSA",
-			"-keysize", "2048",
-			"-validity", "10000",
-			"-dname", "CN=Android Debug,O=Android,C=US")
-
-		if out, err := keytoolCmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("keytool failed to generate keystore: %v\nOutput: %s", err, string(out))
+		// Create a deterministic X.509 certificate from the debug key
+		const serialNumber = 0x5462c4dd
+		tmpl := &x509.Certificate{
+			SerialNumber: big.NewInt(serialNumber),
+			Subject: pkix.Name{
+				CommonName: "gomobile",
+			},
+			NotBefore: time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC),
+			NotAfter:  time.Date(2120, time.January, 1, 12, 0, 0, 0, time.UTC),
+			KeyUsage:  x509.KeyUsageDigitalSignature,
 		}
+
+		certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &privKey.PublicKey, privKey)
+		if err != nil {
+			return fmt.Errorf("failed to create debug certificate: %v", err)
+		}
+		cert, err := x509.ParseCertificate(certDER)
+		if err != nil {
+			return fmt.Errorf("failed to parse created certificate: %v", err)
+		}
+
+		// Create PKCS#12 keystore (password: "android")
+		p12Data, err := pkcs12.Encode(rand.Reader, privKey, cert, []*x509.Certificate{}, "android")
+		if err != nil {
+			return fmt.Errorf("failed to create PKCS#12 keystore: %v", err)
+		}
+
+		if err := os.WriteFile(debugKeystore, p12Data, 0o644); err != nil {
+			return fmt.Errorf("failed to write debug keystore: %v", err)
+		}
+
+		if buildV {
+			fmt.Fprintf(os.Stderr, "Generated debug keystore: %s\n", debugKeystore)
+		}
+	} else if buildV {
+		fmt.Fprintf(os.Stderr, "Using existing debug keystore: %s\n", debugKeystore)
 	}
 
-	// 4. Sign the APK
-	// Using V1, V2, and V3 signing schemes to ensure compatibility with all Android versions in 2026
+	// 3. Sign the APK
 	signArgs := []string{"sign",
 		"--ks", debugKeystore,
 		"--ks-pass", "pass:android",

@@ -19,6 +19,7 @@ require (
 	golang.org/x/mod v0.20.0
 	golang.org/x/tools v0.24.1
 	golang.org/x/tools/go/vcs v0.1.0-deprecated
+	software.sslmate.com/src/go-pkcs12 v0.7.0
 )
 
 require (
@@ -31,6 +32,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/xrash/smetrics v0.0.0-20201216005158-039620a65673 // indirect
+	golang.org/x/crypto v0.11.0 // indirect
 	golang.org/x/image v0.24.0 // indirect
 	golang.org/x/sync v0.11.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect
