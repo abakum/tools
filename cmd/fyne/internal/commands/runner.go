@@ -29,7 +29,7 @@ func (c *command) runOutput(arg ...string) ([]byte, error) {
 		cmd.Env = c.env
 		c.env = []string{}
 	}
-	return cmd.CombinedOutput()
+	return cmd.Output()
 }
 
 func newCommand(cmd string) *command {
