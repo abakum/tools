@@ -115,7 +115,7 @@ func (w *Writer) create(name string) (io.Writer, error) {
 	}
 	const fileHeaderLen = 30 // + filename + extra
 	start := w.offset + fileHeaderLen + len(name)
-	extra := start % 4
+	extra := (4 - start%4) % 4
 
 	zipfw, err := w.w.CreateHeader(&zip.FileHeader{
 		Name:  name,
