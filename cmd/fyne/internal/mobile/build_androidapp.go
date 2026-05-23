@@ -21,8 +21,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -86,6 +88,13 @@ func goAndroidBuild(pkg *packages.Package, bundleID string, androidArchs []strin
 			fmt.Fprintf(os.Stderr, "generated AndroidManifest.xml:\n%s\n", manifestData)
 		}
 	} else {
+		manifestData = regexp.MustCompile(`android:versionCode="[0-9]*"`).ReplaceAll(manifestData,
+			[]byte(`android:versionCode="`+strconv.Itoa(build)+`"`))
+		manifestData = regexp.MustCompile(`android:versionName="[^"]*"`).ReplaceAll(manifestData,
+			[]byte(`android:versionName="`+version+`"`))
+		if err := os.WriteFile(manifestPath, manifestData, 0); err != nil {
+			return nil, fmt.Errorf("error writing %s: %v", manifestPath, err)
+		}
 		libName, err = manifestLibName(manifestData)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing %s: %v", manifestPath, err)
@@ -118,6 +127,15 @@ func goAndroidBuild(pkg *packages.Package, bundleID string, androidArchs []strin
 		nmpkgs[arch], err = extractPkgs(toolchain.Path(ndkRoot, "nm"), libAbsPath)
 		if err != nil {
 			return nil, err
+		}
+		if release {
+			stripPath := toolchain.Path(ndkRoot, "strip")
+			if _, err := os.Stat(stripPath); err == nil {
+				err = runCmd(exec.Command(stripPath, "--strip-all", libAbsPath))
+				if err != nil {
+					return nil, fmt.Errorf("strip failed: %w", err)
+				}
+			}
 		}
 		libFiles = append(libFiles, libPath)
 	}
