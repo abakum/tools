@@ -322,11 +322,8 @@ func goCmdAt(at string, subcmd string, srcs []string, env []string, args ...stri
 		cmd.Args = append(cmd.Args, "-ldflags", buildLdflags)
 	}
 	if buildTrimpath {
-		cmd.Args = append(cmd.Args, "-trimpath")
-	}
-	if buildRelease {
 		// Reproducible builds: -buildvcs=false disables embedding git VCS info
-		cmd.Args = append(cmd.Args, "-buildvcs=false")
+		cmd.Args = append(cmd.Args, "-trimpath", "-buildvcs=false")
 	}
 	if buildWork {
 		cmd.Args = append(cmd.Args, "-work")
