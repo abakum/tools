@@ -128,7 +128,7 @@ func goAndroidBuild(pkg *packages.Package, bundleID string, androidArchs []strin
 		if err != nil {
 			return nil, err
 		}
-		if release {
+		if buildTrimpath {
 			stripPath := toolchain.Path(ndkRoot, "strip")
 			if _, err := os.Stat(stripPath); err == nil {
 				err = runCmd(exec.Command(stripPath, "--strip-all", libAbsPath))
