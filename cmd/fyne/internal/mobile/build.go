@@ -239,7 +239,8 @@ func RunNewBuild(target, appID, icon, name, version string, build int, release, 
 	buildRelease = distribution
 	buildTags = tags
 	if release {
-		buildLdflags = "-w"
+		// Reproducible builds: -buildid= disables random Build ID, -w strips debug info
+		buildLdflags = "-w -buildid="
 		buildTrimpath = true
 	}
 
@@ -322,6 +323,10 @@ func goCmdAt(at string, subcmd string, srcs []string, env []string, args ...stri
 	}
 	if buildTrimpath {
 		cmd.Args = append(cmd.Args, "-trimpath")
+	}
+	if buildRelease {
+		// Reproducible builds: -buildvcs=false disables embedding git VCS info
+		cmd.Args = append(cmd.Args, "-buildvcs=false")
 	}
 	if buildWork {
 		cmd.Args = append(cmd.Args, "-work")
