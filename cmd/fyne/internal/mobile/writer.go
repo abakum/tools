@@ -74,6 +74,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"strings"
 )
 
 // NewWriter returns a new Writer writing an APK file to w.
@@ -115,7 +116,11 @@ func (w *Writer) create(name string) (io.Writer, error) {
 	}
 	const fileHeaderLen = 30 // + filename + extra
 	start := w.offset + fileHeaderLen + len(name)
-	extra := (4 - start%4) % 4
+	align := 4
+	if strings.HasPrefix(name, "lib/") && strings.HasSuffix(name, ".so") {
+		align = 16384
+	}
+	extra := (align - start%align) % align
 
 	zipfw, err := w.w.CreateHeader(&zip.FileHeader{
 		Name:  name,
