@@ -222,7 +222,8 @@ var (
 	buildO          string      // -o
 	buildGcflags    string      // -gcflags
 	buildLdflags    string      // -ldflags
-	buildRelease    bool        // -release
+	buildRelease    bool        // -release (distribution flag)
+	buildReleaseFlag bool       // -release (actual --release flag from fyne package)
 	buildSign       bool        // -sign (use apksigner v1+v2+v3 instead of embedded JAR signature)
 	buildTarget     string      // -os
 	buildTrimpath   bool        // -trimpath
@@ -238,6 +239,7 @@ func RunNewBuild(target, appID, icon, name, version string, build int, release, 
 	buildTarget = target
 	buildBundleID = appID
 	buildRelease = distribution
+	buildReleaseFlag = release
 	buildSign = sign
 	buildTags = tags
 	if release {

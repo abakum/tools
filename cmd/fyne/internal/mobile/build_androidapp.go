@@ -165,7 +165,7 @@ func goAndroidBuild(pkg *packages.Package, bundleID string, androidArchs []strin
 		out = f
 	}
 
-	apkw, err := buildAPK(out, nmpkgs, libFiles, androidArchs, buildSign || !release)
+	apkw, err := buildAPK(out, nmpkgs, libFiles, androidArchs, !buildReleaseFlag && !buildSign)
 	if err != nil {
 		return nil, err
 	}
