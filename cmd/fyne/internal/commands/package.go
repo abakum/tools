@@ -53,6 +53,7 @@ func Package() *cli.Command {
 			stringFlags["certificate"](&p.certificate),
 			stringFlags["profile"](&p.profile),
 			boolFlags["release"](&p.release),
+			boolFlags["sign"](&p.sign),
 			genericFlags["metadata"](&p.customMetadata),
 		},
 		Action: func(_ *cli.Context) error {
@@ -70,6 +71,7 @@ type Packager struct {
 	*appData
 	srcDir, dir, exe, os           string
 	install, release, distribution bool
+	sign                           bool
 	certificate, profile           string // optional flags for releasing
 	tags, category                 string
 	tempDir                        string
@@ -98,6 +100,7 @@ func (p *Packager) AddFlags() {
 	flag.StringVar(&p.AppVersion, "app-version", "", "Version number in the form x, x.y or x.y.z semantic version")
 	flag.IntVar(&p.AppBuild, "app-build", 0, "Build number, should be greater than 0 and incremented for each build")
 	flag.BoolVar(&p.release, "release", false, "Should this package be prepared for release? (disable debug etc)")
+	flag.BoolVar(&p.sign, "sign", false, "Sign APK with apksigner (v1+v2+v3) instead of embedded JAR signature")
 	flag.StringVar(&p.tags, "tags", "", "A comma-separated list of build tags")
 }
 

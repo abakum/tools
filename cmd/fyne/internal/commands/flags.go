@@ -205,6 +205,13 @@ var boolFlags = map[string]func(*bool) cli.Flag{
 			Destination: dst,
 		}
 	},
+	"sign": func(dst *bool) cli.Flag {
+		return &cli.BoolFlag{
+			Name:        "sign",
+			Usage:       "sign APK with apksigner (v1+v2+v3) instead of embedded JAR signature",
+			Destination: dst,
+		}
+	},
 	"use-raw-icon": func(dst *bool) cli.Flag {
 		return &cli.BoolFlag{
 			Name:        "use-raw-icon",

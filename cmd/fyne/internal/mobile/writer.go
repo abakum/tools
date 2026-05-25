@@ -80,7 +80,15 @@ import (
 // NewWriter returns a new Writer writing an APK file to w.
 // The APK will be signed with key.
 func NewWriter(w io.Writer, priv *rsa.PrivateKey) *Writer {
-	apkw := &Writer{priv: priv}
+	apkw := &Writer{priv: priv, sign: true}
+	apkw.w = zip.NewWriter(&countWriter{apkw: apkw, w: w})
+	return apkw
+}
+
+// NewWriterNoSign returns a new Writer writing an aligned ZIP file to w
+// without embedding META-INF signing artifacts.
+func NewWriterNoSign(w io.Writer) *Writer {
+	apkw := &Writer{sign: false}
 	apkw.w = zip.NewWriter(&countWriter{apkw: apkw, w: w})
 	return apkw
 }
@@ -90,6 +98,7 @@ type Writer struct {
 	offset   int
 	w        *zip.Writer
 	priv     *rsa.PrivateKey
+	sign     bool
 	manifest []manifestEntry
 	cur      *fileWriter
 }
@@ -132,7 +141,9 @@ func (w *Writer) create(name string) (io.Writer, error) {
 	w.cur = &fileWriter{
 		name: name,
 		w:    zipfw,
-		sha1: sha1.New(),
+	}
+	if w.sign {
+		w.cur.sha1 = sha1.New()
 	}
 	return w.cur, nil
 }
@@ -146,6 +157,16 @@ func (w *Writer) Close() error {
 		return fmt.Errorf("apk: %v", err)
 	}
 
+	if w.sign {
+		if err := w.writeSigning(); err != nil {
+			return err
+		}
+	}
+
+	return w.w.Close()
+}
+
+func (w *Writer) writeSigning() error {
 	hasDex := false
 	for _, entry := range w.manifest {
 		if entry.name == "classes.dex" {
@@ -210,7 +231,7 @@ func (w *Writer) Close() error {
 		return err
 	}
 
-	return w.w.Close()
+	return nil
 }
 
 const manifestHeader = `Manifest-Version: 1.0
@@ -232,10 +253,12 @@ func (w *Writer) clearCur() error {
 	if w.cur == nil {
 		return nil
 	}
-	w.manifest = append(w.manifest, manifestEntry{
-		name: w.cur.name,
-		sha1: w.cur.sha1,
-	})
+	if w.sign {
+		w.manifest = append(w.manifest, manifestEntry{
+			name: w.cur.name,
+			sha1: w.cur.sha1,
+		})
+	}
 	w.cur.closed = true
 	w.cur = nil
 	return nil
@@ -268,9 +291,11 @@ func (w *fileWriter) Write(p []byte) (n int, err error) {
 	if w.closed {
 		return 0, fmt.Errorf("apk: write to closed file %q", w.name)
 	}
-	_, err = w.sha1.Write(p)
-	if err != nil {
-		return 0, fmt.Errorf("apk: sha1 write %s", err)
+	if w.sha1 != nil {
+		_, err = w.sha1.Write(p)
+		if err != nil {
+			return 0, fmt.Errorf("apk: sha1 write %s", err)
+		}
 	}
 	n, err = w.w.Write(p)
 	if err != nil {

@@ -165,7 +165,7 @@ func goAndroidBuild(pkg *packages.Package, bundleID string, androidArchs []strin
 		out = f
 	}
 
-	apkw, err := buildAPK(out, nmpkgs, libFiles, androidArchs)
+	apkw, err := buildAPK(out, nmpkgs, libFiles, androidArchs, buildSign || !release)
 	if err != nil {
 		return nil, err
 	}
@@ -182,10 +182,9 @@ func goAndroidBuild(pkg *packages.Package, bundleID string, androidArchs []strin
 		}
 	}
 
-	// Sign the APK with apksigner only for debug builds (!release)
+	// Sign the APK with apksigner only for --sign
 	apkPath := buildO[:len(buildO)-3] + "apk" // Get path to .apk file
-	if !buildN && !release {
-		// Only sign debug builds (APK files)
+	if !buildN && buildSign {
 		if err := signAPK(apkPath); err != nil {
 			return nil, fmt.Errorf("failed to sign APK: %v", err)
 		}
@@ -302,19 +301,22 @@ func addAssets(apkw *Writer, manifestData []byte, dir, iconPath string, target i
 	return nil
 }
 
-func buildAPK(out io.Writer, nmpkgs map[string]map[string]bool, libFiles []string, androidArchs []string) (*Writer, error) {
-	block, _ := pem.Decode([]byte(debugCert))
-	if block == nil {
-		return nil, errors.New("no debug cert")
-	}
-	privKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
-	if err != nil {
-		return nil, err
-	}
-
+func buildAPK(out io.Writer, nmpkgs map[string]map[string]bool, libFiles []string, androidArchs []string, sign bool) (*Writer, error) {
 	var apkw *Writer
 	if !buildN {
-		apkw = NewWriter(out, privKey)
+		if sign {
+			block, _ := pem.Decode([]byte(debugCert))
+			if block == nil {
+				return nil, errors.New("no debug cert")
+			}
+			privKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+			if err != nil {
+				return nil, err
+			}
+			apkw = NewWriter(out, privKey)
+		} else {
+			apkw = NewWriterNoSign(out)
+		}
 	}
 
 	w, err := apkwCreate("classes.dex", apkw)

@@ -223,6 +223,7 @@ var (
 	buildGcflags    string      // -gcflags
 	buildLdflags    string      // -ldflags
 	buildRelease    bool        // -release
+	buildSign       bool        // -sign (use apksigner v1+v2+v3 instead of embedded JAR signature)
 	buildTarget     string      // -os
 	buildTrimpath   bool        // -trimpath
 	buildWork       bool        // -work
@@ -233,10 +234,11 @@ var (
 )
 
 // RunNewBuild executes a new mobile build for the specified configuration
-func RunNewBuild(target, appID, icon, name, version string, build int, release, distribution bool, cert, profile string, tags []string) error {
+func RunNewBuild(target, appID, icon, name, version string, build int, release, distribution bool, cert, profile string, tags []string, sign bool) error {
 	buildTarget = target
 	buildBundleID = appID
 	buildRelease = distribution
+	buildSign = sign
 	buildTags = tags
 	if release {
 		// Reproducible builds: -buildid= disables random Build ID, -w strips debug info

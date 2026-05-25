@@ -14,11 +14,11 @@ import (
 )
 
 func (p *Packager) packageAndroid(arch string, tags []string) error {
-	return mobile.RunNewBuild(arch, p.AppID, p.icon, p.Name, p.AppVersion, p.AppBuild, p.release, p.distribution, "", "", tags)
+	return mobile.RunNewBuild(arch, p.AppID, p.icon, p.Name, p.AppVersion, p.AppBuild, p.release, p.distribution, "", "", tags, p.sign)
 }
 
 func (p *Packager) packageIOS(target string, tags []string) error {
-	err := mobile.RunNewBuild(target, p.AppID, p.icon, p.Name, p.AppVersion, p.AppBuild, p.release, p.distribution, p.certificate, p.profile, tags)
+	err := mobile.RunNewBuild(target, p.AppID, p.icon, p.Name, p.AppVersion, p.AppBuild, p.release, p.distribution, p.certificate, p.profile, tags, false)
 	if err != nil {
 		return err
 	}
