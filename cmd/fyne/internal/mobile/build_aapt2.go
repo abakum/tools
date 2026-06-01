@@ -18,6 +18,71 @@ type aapt2Resource struct {
 	Data []byte
 }
 
+func ensureIconAttributes(manifestStr string) string {
+	iconAttr := `        android:icon="@mipmap/icon"`
+	roundIconAttr := `        android:roundIcon="@mipmap/icon"`
+
+	applicationStart := strings.Index(manifestStr, `<application`)
+	if applicationStart != -1 {
+		appEnd := findTagEnd(manifestStr, applicationStart)
+		if appEnd != -1 {
+			appTag := manifestStr[applicationStart : appEnd+1]
+			if !strings.Contains(appTag, `android:icon`) {
+				indent := "\n        "
+				newAppTag := strings.Replace(appTag, `>`, indent+iconAttr+`>`, 1)
+				if !strings.Contains(newAppTag, `android:roundIcon`) {
+					newAppTag = strings.Replace(newAppTag, `>`, indent+roundIconAttr+`>`, 1)
+				}
+				manifestStr = manifestStr[:applicationStart] + newAppTag + manifestStr[appEnd+1:]
+			} else if !strings.Contains(appTag, `android:roundIcon`) {
+				newAppTag := strings.Replace(appTag, `>`, "\n        "+roundIconAttr+`>`, 1)
+				manifestStr = manifestStr[:applicationStart] + newAppTag + manifestStr[appEnd+1:]
+			}
+		}
+	}
+
+	activityPattern := `<activity`
+	pos := 0
+	for {
+		activityStart := strings.Index(manifestStr[pos:], activityPattern)
+		if activityStart == -1 {
+			break
+		}
+		activityStart += pos
+		activityEnd := findTagEnd(manifestStr, activityStart)
+		if activityEnd == -1 {
+			break
+		}
+		activityTag := manifestStr[activityStart : activityEnd+1]
+		if strings.Contains(activityTag, `android:name="org.golang.app.GoNativeActivity"`) && !strings.Contains(activityTag, `android:icon`) {
+			newActivityTag := strings.Replace(activityTag, `>`, "\n        "+iconAttr+`>`, 1)
+			manifestStr = manifestStr[:activityStart] + newActivityTag + manifestStr[activityEnd+1:]
+		}
+		pos = activityEnd + 1
+	}
+
+	return manifestStr
+}
+
+func findTagEnd(s string, start int) int {
+	inQuote := false
+	quoteChar := rune(0)
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if c == '"' || c == '\'' {
+			if !inQuote {
+				inQuote = true
+				quoteChar = rune(c)
+			} else if rune(c) == quoteChar {
+				inQuote = false
+			}
+		} else if c == '>' && !inQuote {
+			return i
+		}
+	}
+	return -1
+}
+
 // compileManifestAAPT2 converts a text AndroidManifest.xml to binary format via aapt2.
 // Returns the binary manifest data and any additional resources (resources.arsc, res/*)
 // from the aapt2 output APK.
@@ -91,6 +156,35 @@ func compileManifestAAPT2(manifestData []byte, dir, iconPath string, target int)
 	// Insert uses-sdk before the closing tag (with proper indentation)
 	manifestStr = manifestStr[:startIdx] + usesSDK + leadingWhitespace + closingTag + manifestStr[idx+len(closingTag):]
 
+	resDir := filepath.Join(dir, "res")
+	resMipmapDir := filepath.Join(resDir, "mipmap-xxxhdpi-v4")
+	resIconPath := filepath.Join(resMipmapDir, "icon.png")
+
+	hasResDir := false
+	if info, err := os.Stat(resDir); err == nil && info.IsDir() {
+		hasResDir = true
+		if _, err := os.Stat(resIconPath); os.IsNotExist(err) && iconPath != "" {
+			if err := os.MkdirAll(resMipmapDir, 0o755); err == nil {
+				src, err := os.ReadFile(iconPath)
+				if err == nil {
+					os.WriteFile(resIconPath, src, 0o644)
+				}
+			}
+		}
+	} else if iconPath != "" {
+		if err := os.MkdirAll(resMipmapDir, 0o755); err == nil {
+			src, err := os.ReadFile(iconPath)
+			if err == nil {
+				os.WriteFile(resIconPath, src, 0o644)
+				hasResDir = true
+			}
+		}
+	}
+
+	if hasResDir {
+		manifestStr = ensureIconAttributes(manifestStr)
+	}
+
 	// Write modified manifest
 	if err := os.WriteFile(manifestFile, []byte(manifestStr), 0o644); err != nil {
 		return nil, nil, fmt.Errorf("failed to write manifest file: %v", err)
@@ -108,7 +202,6 @@ func compileManifestAAPT2(manifestData []byte, dir, iconPath string, target int)
 	// If dir/res/ exists, compile resources and pass to aapt2 link.
 	// This allows users to reference resources from the manifest:
 	//   android:icon="@mipmap/icon", android:theme="@style/MyTheme", etc.
-	resDir := filepath.Join(dir, "res")
 	if info, err := os.Stat(resDir); err == nil && info.IsDir() {
 		compiledZip := filepath.Join(aapt2Dir, "compiled_res.zip")
 		compileArgs := []string{"compile", "--dir", resDir, "-o", compiledZip}
