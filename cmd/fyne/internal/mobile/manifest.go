@@ -24,6 +24,28 @@ type metaDataXML struct {
 	Value string `xml:"value,attr"`
 }
 
+type serviceXML struct {
+	Name string `xml:"name,attr"`
+}
+
+type manifestServicesXML struct {
+	Services []serviceXML `xml:"application>service"`
+}
+
+func manifestServices(data []byte) ([]string, error) {
+	manifest := new(manifestServicesXML)
+	if err := xml.Unmarshal(data, manifest); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(manifest.Services))
+	for _, svc := range manifest.Services {
+		if svc.Name != "" {
+			names = append(names, svc.Name)
+		}
+	}
+	return names, nil
+}
+
 // manifestLibName parses the AndroidManifest.xml and finds the library
 // name of the NativeActivity.
 func manifestLibName(data []byte) (string, error) {

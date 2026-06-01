@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 )
 
 // MinSDK is the targeted sdk version for support by package binres.
@@ -58,14 +61,41 @@ func apiResources() ([]byte, error) {
 }
 
 func apiResourcesPath() (string, error) {
-	// TODO(elias.naur): use the logic from gomobile's androidAPIPath and use the any installed version of the
-	// Android SDK instead. Currently, the binres_test.go tests fail on anything newer than android-15.
 	sdkdir := os.Getenv("ANDROID_HOME")
 	if sdkdir == "" {
 		return "", fmt.Errorf("ANDROID_HOME env var not set")
 	}
-	platform := fmt.Sprintf("android-%v", MinSDK)
-	return path.Join(sdkdir, "platforms", platform, "android.jar"), nil
+	platformsDir := filepath.Join(sdkdir, "platforms")
+	entries, err := os.ReadDir(platformsDir)
+	if err != nil {
+		return "", err
+	}
+	if len(entries) == 0 {
+		return "", fmt.Errorf("no Android platforms found in %s", platformsDir)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		vi := strings.TrimPrefix(entries[i].Name(), "android-")
+		vj := strings.TrimPrefix(entries[j].Name(), "android-")
+		ni, _ := strconv.Atoi(vi)
+		nj, _ := strconv.Atoi(vj)
+		return ni > nj
+	})
+	return filepath.Join(platformsDir, entries[0].Name(), "android.jar"), nil
+}
+
+// LatestAPI returns the API level of the latest installed Android platform.
+func LatestAPI() (int, error) {
+	p, err := apiResourcesPath()
+	if err != nil {
+		return 0, err
+	}
+	base := filepath.Base(filepath.Dir(p))
+	verStr := strings.TrimPrefix(base, "android-")
+	ver, err := strconv.Atoi(verStr)
+	if err != nil {
+		return 0, fmt.Errorf("cannot parse platform version from %q: %v", base, err)
+	}
+	return ver, nil
 }
 
 // PackResources produces a stripped down gzip version of the resources.arsc from api jar.

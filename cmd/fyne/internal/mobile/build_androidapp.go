@@ -92,6 +92,16 @@ func goAndroidBuild(pkg *packages.Package, bundleID string, androidArchs []strin
 			[]byte(`android:versionCode="`+strconv.Itoa(build)+`"`))
 		manifestData = regexp.MustCompile(`android:versionName="[^"]*"`).ReplaceAll(manifestData,
 			[]byte(`android:versionName="`+version+`"`))
+		manifestData = regexp.MustCompile(`(?s)<uses-sdk[^>]*/?>.*?(?:</uses-sdk>)?\n?`).ReplaceAll(manifestData, nil)
+		usesSDK := fmt.Sprintf(
+			"    <uses-sdk\n        android:minSdkVersion=\"%d\"\n        android:targetSdkVersion=\"%d\" />\n",
+			binres.MinSDK, target,
+		)
+		manifestData = bytes.Replace(manifestData,
+			[]byte("</manifest>"),
+			append([]byte(usesSDK), []byte("</manifest>")...),
+			1,
+		)
 		if err := os.WriteFile(manifestPath, manifestData, 0); err != nil {
 			return nil, fmt.Errorf("error writing %s: %v", manifestPath, err)
 		}
@@ -169,9 +179,24 @@ func goAndroidBuild(pkg *packages.Package, bundleID string, androidArchs []strin
 	if err != nil {
 		return nil, err
 	}
-	err = addAssets(apkw, manifestData, dir, iconPath, target)
+
+	servicesDex, err := compileJavaServices(manifestData, dir)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("compiling java services: %v", err)
+	}
+	if servicesDex != nil {
+		w, err := apkwCreate("classes2.dex", apkw)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := w.Write(servicesDex); err != nil {
+			return nil, err
+		}
+	}
+
+	err = addAssets(apkw, manifestData, dir, iconPath, target, true)
+	if err != nil {
+		return nil, fmt.Errorf("adding assets: %v", err)
 	}
 
 	// TODO: add gdbserver to apk?
@@ -207,7 +232,7 @@ func goAndroidBuild(pkg *packages.Package, bundleID string, androidArchs []strin
 	return nmpkgs[androidArchs[0]], nil
 }
 
-func addAssets(apkw *Writer, manifestData []byte, dir, iconPath string, target int) error {
+func addAssets(apkw *Writer, manifestData []byte, dir, iconPath string, target int, useAAPT2 bool) error {
 	// Add any assets.
 	var arsc struct {
 		iconPath string
@@ -259,30 +284,56 @@ func addAssets(apkw *Writer, manifestData []byte, dir, iconPath string, target i
 		}
 	}
 
-	bxml, err := binres.UnmarshalXML(bytes.NewReader(manifestData), arsc.iconPath != "", target)
-	if err != nil {
-		return err
-	}
+	var manifestBinary []byte
+	if useAAPT2 {
+		// Use aapt2 for custom manifests
+		var aapt2Resources []aapt2Resource
+		var err error
+		manifestBinary, aapt2Resources, err = compileManifestAAPT2(manifestData, dir, iconPath, target)
+		if err != nil {
+			return fmt.Errorf("compiling manifest with aapt2: %v", err)
+		}
+		for _, res := range aapt2Resources {
+			w, err := apkwCreate(res.Name, apkw)
+			if err != nil {
+				return err
+			}
+			if _, err := w.Write(res.Data); err != nil {
+				return err
+			}
+		}
+	} else {
+		// Use binres for generated (default) manifests
+		bxml, err := binres.UnmarshalXML(bytes.NewReader(manifestData), arsc.iconPath != "", target)
+		if err != nil {
+			return err
+		}
 
-	// generate resources.arsc identifying single xxxhdpi icon resource.
-	if arsc.iconPath != "" {
-		pkgname, err := bxml.RawValueByName("manifest", xml.Name{Local: "package"})
+		// generate resources.arsc identifying single xxxhdpi icon resource.
+		if arsc.iconPath != "" {
+			pkgname, err := bxml.RawValueByName("manifest", xml.Name{Local: "package"})
+			if err != nil {
+				return err
+			}
+			tbl, name := binres.NewMipmapTable(pkgname)
+			if err := apkwWriteFile(name, arsc.iconPath, apkw); err != nil {
+				return err
+			}
+			w, err := apkwCreate("resources.arsc", apkw)
+			if err != nil {
+				return err
+			}
+			bin, err := tbl.MarshalBinary()
+			if err != nil {
+				return err
+			}
+			if _, err := w.Write(bin); err != nil {
+				return err
+			}
+		}
+
+		manifestBinary, err = bxml.MarshalBinary()
 		if err != nil {
-			return err
-		}
-		tbl, name := binres.NewMipmapTable(pkgname)
-		if err := apkwWriteFile(name, arsc.iconPath, apkw); err != nil {
-			return err
-		}
-		w, err := apkwCreate("resources.arsc", apkw)
-		if err != nil {
-			return err
-		}
-		bin, err := tbl.MarshalBinary()
-		if err != nil {
-			return err
-		}
-		if _, err := w.Write(bin); err != nil {
 			return err
 		}
 	}
@@ -291,11 +342,7 @@ func addAssets(apkw *Writer, manifestData []byte, dir, iconPath string, target i
 	if err != nil {
 		return err
 	}
-	bin, err := bxml.MarshalBinary()
-	if err != nil {
-		return err
-	}
-	if _, err := w.Write(bin); err != nil {
+	if _, err := w.Write(manifestBinary); err != nil {
 		return err
 	}
 	return nil
@@ -421,6 +468,122 @@ func androidPkgName(name string) string {
 	return s
 }
 
+func compileJavaServices(manifestData []byte, manifestDir string) ([]byte, error) {
+	services, err := manifestServices(manifestData)
+	if err != nil {
+		return nil, fmt.Errorf("parsing services from manifest: %v", err)
+	}
+	if len(services) == 0 {
+		return nil, nil
+	}
+
+	androidHome := os.Getenv("ANDROID_HOME")
+	if androidHome == "" {
+		return nil, errors.New("ANDROID_HOME not set (required to compile Java services)")
+	}
+
+	platform, err := findLastDir(filepath.Join(androidHome, "platforms"))
+	if err != nil {
+		return nil, fmt.Errorf("finding Android platform for javac: %v", err)
+	}
+	buildTools, err := findLastDir(filepath.Join(androidHome, "build-tools"))
+	if err != nil {
+		return nil, fmt.Errorf("finding Android build-tools for d8: %v", err)
+	}
+
+	javaFiles := make([]string, 0, len(services))
+	for _, svc := range services {
+		parts := strings.Split(svc, ".")
+		classFile := filepath.Join(manifestDir, filepath.Join(parts...)+".java")
+		if _, err := os.Stat(classFile); err == nil {
+			javaFiles = append(javaFiles, classFile)
+			continue
+		}
+		flatFile := filepath.Join(manifestDir, parts[len(parts)-1]+".java")
+		if _, err := os.Stat(flatFile); err == nil {
+			javaFiles = append(javaFiles, flatFile)
+			continue
+		}
+		return nil, fmt.Errorf("service %q declared in manifest but source file not found (tried %s and %s)", svc, classFile, flatFile)
+	}
+
+	if len(javaFiles) == 0 {
+		return nil, nil
+	}
+
+	classesDir := filepath.Join(tmpdir, "javac-classes")
+	if err := os.MkdirAll(classesDir, 0o755); err != nil {
+		return nil, err
+	}
+
+	javacCmd := exec.Command("javac",
+		"-source", "1.8",
+		"-target", "1.8",
+		"-bootclasspath", filepath.Join(platform, "android.jar"),
+		"-d", classesDir,
+	)
+	javacCmd.Args = append(javacCmd.Args, javaFiles...)
+	if buildV {
+		fmt.Fprintf(os.Stderr, "javac: %s\n", strings.Join(javacCmd.Args, " "))
+	}
+	if out, err := javacCmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("javac failed: %v\n%s", err, string(out))
+	}
+
+	var classFiles []string
+	filepath.WalkDir(classesDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(path, ".class") {
+			classFiles = append(classFiles, path)
+		}
+		return nil
+	})
+	if len(classFiles) == 0 {
+		return nil, nil
+	}
+
+	dexOut := filepath.Join(tmpdir, "services-dex")
+	if err := os.MkdirAll(dexOut, 0o755); err != nil {
+		return nil, err
+	}
+
+	d8Path := filepath.Join(buildTools, "d8")
+	d8Cmd := exec.Command(d8Path, append([]string{"--output", dexOut}, classFiles...)...)
+	if buildV {
+		fmt.Fprintf(os.Stderr, "d8: %s\n", strings.Join(d8Cmd.Args, " "))
+	}
+	if out, err := d8Cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("d8 failed: %v\n%s", err, string(out))
+	}
+
+	dexPath := filepath.Join(dexOut, "classes.dex")
+	dexData, err := os.ReadFile(dexPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading services dex: %v", err)
+	}
+	return dexData, nil
+}
+
+func findLastDir(path string) (string, error) {
+	dir, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer dir.Close()
+
+	children, err := dir.Readdirnames(-1)
+	if err != nil {
+		return "", err
+	}
+	if len(children) == 0 {
+		return "", os.ErrNotExist
+	}
+	sort.Strings(children)
+	return filepath.Join(path, children[len(children)-1]), nil
+}
+
 func convertAPKToAAB(aabPath string) error {
 	apkPath := buildO[:len(aabPath)-3] + "apk"
 	apkProtoPath := buildO[:len(aabPath)-3] + "apk-proto"
@@ -454,6 +617,9 @@ func convertAPKToAAB(aabPath string) error {
 	_ = os.MkdirAll(filepath.Join(tmpPath, "manifest"), 0o755)
 	_ = os.Rename(filepath.Join(tmpPath, "AndroidManifest.xml"), filepath.Join(tmpPath, "manifest", "AndroidManifest.xml"))
 	_ = os.Rename(filepath.Join(tmpPath, "classes.dex"), filepath.Join(tmpPath, "dex", "classes.dex"))
+	if _, err := os.Stat(filepath.Join(tmpPath, "classes2.dex")); err == nil {
+		_ = os.Rename(filepath.Join(tmpPath, "classes2.dex"), filepath.Join(tmpPath, "dex", "classes2.dex"))
+	}
 
 	cmd = exec.Command("zip", "../base.zip", "-r", ".")
 	cmd.Dir = tmpPath

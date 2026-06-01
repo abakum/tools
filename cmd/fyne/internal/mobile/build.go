@@ -109,7 +109,10 @@ func runBuildImpl(cmd *command) (*packages.Package, error) {
 			}
 			return pkg, nil
 		}
-		target := 35
+		target, err := binres.LatestAPI()
+		if err != nil {
+			return nil, fmt.Errorf("failed to determine target SDK version: %v", err)
+		}
 		// if !buildRelease {
 		// 	target = 29 // TODO once we have gomobile debug signing working for v2 android signs
 		// }
