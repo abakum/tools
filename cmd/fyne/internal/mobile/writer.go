@@ -75,7 +75,6 @@ import (
 	"hash"
 	"io"
 	"strings"
-	"time"
 )
 
 // NewWriter returns a new Writer writing an APK file to w.
@@ -133,9 +132,8 @@ func (w *Writer) create(name string) (io.Writer, error) {
 	extra := (align - start%align) % align
 
 	zipfw, err := w.w.CreateHeader(&zip.FileHeader{
-		Name:     name,
-		Extra:    make([]byte, extra),
-		Modified: time.Time{}, // zero timestamp for reproducibility
+		Name:  name,
+		Extra: make([]byte, extra),
 	})
 	if err != nil {
 		return nil, err
