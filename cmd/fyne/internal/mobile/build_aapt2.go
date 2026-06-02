@@ -132,7 +132,7 @@ func compileManifestAAPT2(manifestData []byte, dir, iconPath string, target int)
 
 	// Inject our <uses-sdk>
 	usesSDK := fmt.Sprintf(
-		"\n    <uses-sdk\n        android:minSdkVersion=\"%d\"\n        android:targetSdkVersion=\"%d\" />\n",
+		"<uses-sdk\n        android:minSdkVersion=\"%d\"\n        android:targetSdkVersion=\"%d\" />\n",
 		binres.MinSDK, target,
 	)
 
@@ -142,7 +142,7 @@ func compileManifestAAPT2(manifestData []byte, dir, iconPath string, target int)
 	if idx == -1 {
 		return nil, nil, fmt.Errorf("manifest does not contain closing </manifest> tag")
 	}
-	
+
 	// Check if there's leading whitespace before the closing tag
 	leadingWhitespace := ""
 	startIdx := idx
@@ -152,7 +152,7 @@ func compileManifestAAPT2(manifestData []byte, dir, iconPath string, target int)
 	if startIdx < idx {
 		leadingWhitespace = manifestStr[startIdx:idx]
 	}
-	
+
 	// Insert uses-sdk before the closing tag (with proper indentation)
 	manifestStr = manifestStr[:startIdx] + usesSDK + leadingWhitespace + closingTag + manifestStr[idx+len(closingTag):]
 

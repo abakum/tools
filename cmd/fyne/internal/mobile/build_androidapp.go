@@ -94,7 +94,7 @@ func goAndroidBuild(pkg *packages.Package, bundleID string, androidArchs []strin
 			[]byte(`android:versionName="`+version+`"`))
 		manifestData = regexp.MustCompile(`(?s)<uses-sdk[^>]*/?>.*?(?:</uses-sdk>)?\n?`).ReplaceAll(manifestData, nil)
 		usesSDK := fmt.Sprintf(
-			"    <uses-sdk\n        android:minSdkVersion=\"%d\"\n        android:targetSdkVersion=\"%d\" />\n",
+			"<uses-sdk\n        android:minSdkVersion=\"%d\"\n        android:targetSdkVersion=\"%d\" />\n",
 			binres.MinSDK, target,
 		)
 		manifestData = bytes.Replace(manifestData,
@@ -175,7 +175,12 @@ func goAndroidBuild(pkg *packages.Package, bundleID string, androidArchs []strin
 		out = f
 	}
 
-	apkw, err := buildAPK(out, nmpkgs, libFiles, androidArchs, !buildReleaseFlag && !buildSign)
+	activityDex, err := compileCustomActivity(dir)
+	if err != nil {
+		return nil, fmt.Errorf("compiling custom activity: %v", err)
+	}
+
+	apkw, err := buildAPK(out, nmpkgs, libFiles, androidArchs, !buildReleaseFlag && !buildSign, activityDex)
 	if err != nil {
 		return nil, err
 	}
@@ -348,7 +353,7 @@ func addAssets(apkw *Writer, manifestData []byte, dir, iconPath string, target i
 	return nil
 }
 
-func buildAPK(out io.Writer, nmpkgs map[string]map[string]bool, libFiles []string, androidArchs []string, sign bool) (*Writer, error) {
+func buildAPK(out io.Writer, nmpkgs map[string]map[string]bool, libFiles []string, androidArchs []string, sign bool, activityDex []byte) (*Writer, error) {
 	var apkw *Writer
 	if !buildN {
 		if sign {
@@ -370,12 +375,18 @@ func buildAPK(out io.Writer, nmpkgs map[string]map[string]bool, libFiles []strin
 	if err != nil {
 		return nil, err
 	}
-	dexData, err := base64.StdEncoding.DecodeString(dexStr)
-	if err != nil {
-		log.Fatalf("internal error bad dexStr: %v", err)
-	}
-	if _, err := w.Write(dexData); err != nil {
-		return nil, err
+	if activityDex != nil {
+		if _, err := w.Write(activityDex); err != nil {
+			return nil, err
+		}
+	} else {
+		dexData, err := base64.StdEncoding.DecodeString(dexStr)
+		if err != nil {
+			log.Fatalf("internal error bad dexStr: %v", err)
+		}
+		if _, err := w.Write(dexData); err != nil {
+			return nil, err
+		}
 	}
 
 	for _, libFile := range libFiles {
